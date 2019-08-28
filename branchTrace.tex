@@ -34,42 +34,53 @@ space, often mapping directly to physical memory. Dynamically linked
 programs require the debugger to keep track of memory allocation
 operations using either trace or stop-mode debugging.
 
+\section{Contents of an Instruction Delta Trace} \label{Trace Contents}
+
 \subsection{Sequential Instructions} \label{Sequential Instructions}
 
-For instruction set architectures where all instructions are executed
+For instruction set architectures such as RISC-V, where all instructions are executed
 unconditionally or at least their execution can be determined based on
-the program, the instructions between the deltas are assumed to be
-executed sequentially. This characteristic means that there is no need
-to report them via the trace, only whether the branches were taken or not
-and the addresses of taken indirect jumps.
+the program binary, the instructions between the deltas are executed sequentially.
+As a result, there is no need to report them via the trace. The trace only
+needs to contain whether the branches were taken or not, and the addresses
+of taken indirect jumps.
 
-\subsection{Uninferable PC Discontinuity} \label{uninfpc}
+\subsection{Uninferable PC Discontinuities} \label{uninfpc}
 
-If the program counter is changed by an amount that cannot be
-inferred from the execution binary, the trace decoder needs to be
-given the destination address (i.e. the address of the next valid
-instruction).  Examples of this are indirect jumps, where
-the next instruction address is determined by the contents of a
-register rather than a constant embedded in the source code.
+An uninferable program counter discontinuity is a program counter change
+that can not be inferred from the program binary alone. For these cases,
+the instruction delta trace must include a destination address, the
+address of the next valid instruction.
+
+Examples of this are indirect jumps, where the address of the
+next instruction is determined by the contents of a register
+rather than a constant that is embedded in the program binary.
 
 \subsection{Branches} \label{branches}
 
-When a branch occurs, the decoder must be informed of whether it was
-taken or not.  For a direct branch, this is sufficient.  There are no
-indirect branches in RISC-V; an indirect jump is an uninferable PC
-discontinuity.
+A branch is an instruction where a jump is conditional on the
+value of a register. In order to be able to follow program flow,
+the trace must include whether a branch was taken or not.
+
+For a direct branch, no further information is required to follow
+program flow. The RISC-V ISA does not support indirect branches
+where the branch address is stored in a register.
 
 \subsection{Interrupts and Exceptions} \label{interruptsexceptions}
 
-Interrupts are a different type of delta, they generally occur
+Interrupts are a different type of address delta. They generally occur
 asynchronously to the program's execution rather than intentionally as
 a result of a specific instruction or event. Exceptions can be thought
-of in the same way, even though they can be typically linked back to a
-specific instruction address.  The decoder generally does not know
+of in the same way, even though they can typically be linked back to a
+specific instruction address.
+
+The decoder generally does not know
 where an interrupt occurs in the instruction sequence, so the trace
 must report the address where normal program flow ceased, as well as
 give an indication of the asynchronous destination which may be as
-simple as reporting the exception type.  When an interrupt or
+simple as reporting the exception type.
+
+When an interrupt or
 exception occurs, or the processor is halted, the final instruction
 executed beforehand must be traced.  Following this, for an interrupt
 or exception, the next valid instruction address (the first of the
@@ -80,7 +91,7 @@ if it is not.
 \subsection{Synchronization} \label{synchronization}
 
 In order to make the trace robust there need to be regular
-synchronization points within the trace. Synchronization is made by
+synchronization points within the trace. Synchronization is achieved by
 sending a full valued instruction address (and potentially a context
 identifier). The decoder and debugger may also benefit from sending
 the reason for synchronising. The frequency of synchronization is a
@@ -91,70 +102,108 @@ The instruction trace encoder needs to synchronise fully:
 \begin{itemize}
 
 \item After a reset.
-  \item When tracing starts.
+\item When tracing starts.
 \item If the instruction is the first of an interrupt service routine or
 exception handler (hardware context change).
 \item After a prolonged period of time.
 \end{itemize}
 
-\subsection{Optional and run-time configurable modes} \label{optional}
+\section{Optional and run-time configurable modes} \label{optional}
 
-The following modes are optional, and if present must be run-time selectable.  The 
-active run-time options must be reported in the \textit{te\_support} packet, which is issued by the
-encoder whenever the encoder configuration is changed.
+An instruction trace encoder may support multiple tracing modes.
+To make sure that the decoder treats the incoming packets
+correctly, it needs to be informed of the current active configuration.
+The configuration is reported by a packet that is issued by the encoder
+whenever the encoder configuration is changed.
 
-Each optional mode lists the associated parameters; see Table~\ref{tab:parameters} for further 
-details.
+Here are common examples of modes:
 
-\subsubsection{Full address} \label{sec:full-address}
+\begin{itemize}
+  \item delta address mode:
+    program counter discontinuities are encoded as deltas.
+  \item full address mode:
+    program counter discontinuities are encoded as absolute address values.
+  \item implicit exception mode:
+    destination addresses of CPU exceptions are assumed to be known by the decoder, and thus not encoded
+    in the trace.
+  \item implicit return mode:
+    the destination address of function call returns is derived from a call stack, and thus not encoded
+    in the trace.
+  \item branch prediction mode:
+    branches that are predicted correctly by an encoder branch predictor (and an identical copy in the decoder)
+    are not encoded as taken/non-taken, but as a more efficient branch count number.
+\end{itemize}
+
+Modes may have associated parameters; see Table~\ref{tab:parameters}
+for further details.
+
+\subsection{Delta Address Mode} \label{sec:delta-address}
 
 Related parameters: None
 
-All packet formats apart from format 3 output addresses in differential form by default.
-An option to output full addresses for all packet formats is a useful debugging aid for 
-software decoder developers.  It will always result in less efficient trace encoding.
+In delta address mode, non-sequential program counter changes
+are encoded as the difference between the previous and the current
+address. This kind of encoding require less bits than encoding the
+full address, and thus results in higher compression ratios.
 
-\subsubsection{Implicit exception} \label{sec:implicit-exception}
+This is the default encoding mode.
+
+\subsection{Full Address Mode} \label{sec:full-address}
 
 Related parameters: None
 
-The exception handler base address is specified by \textbf{\textit{utvec/stvec/mtvec}}, and 
-in some RISC-V implementations the lower address bits can be specified by 
-\textbf{\textit{ucause/scause/mcause}}.  
-By default, both these values are reported when an exception or interrupt occurs, 
-via the the format 3, subformat 1 packet.  The 'implicit exception' option omits the 
-trap handler address, and will improve efficiency in cases where the decoder can infer 
-the address of the trap handler from just the exception cause.
+When this mode is enabled, all addresses in the trace are encoded
+as full addresses instead of delta form. This kind of encoding is
+less efficient, but it can be a useful debugging aid for software decoder
+developers.
 
-\subsubsection{Implicit return} \label{sec:implicit-return}
+\subsection{Implicit Exception Mode} \label{sec:implicit-exception}
+
+Related parameters: None
+
+The RISC-V Privileged ISA specification stores exception handler base
+addresses in the \textbf{\textit{utvec/stvec/mvec}} CSR registers.
+In some RISC-V implementations, the lower address bits are stored in
+the \textbf{\textit{ucause/scause/mcause}} CSR registers.
+
+By default, both the vec and cause values are emitted by the trace encoder
+when an exception or interrupt occurs.
+
+The implicit exception mode omits vec, the trap handler address, from
+the trace, and thus improves encoding efficiency.
+
+This mode can only be used if the decoder can infer the address of the trap
+handler using just the exception cause.
+
+\subsection{Implicit Return Mode} \label{sec:implicit-return}
 
 Related parameters: \textit{call\_counter\_size\_p}, \textit{return\_stack\_size\_p}.
 
 Although a function return is usually an indirect jump, well behaved programs following a 
 calling convention return to the point in the program from which the function was called, 
 and as such it is possible to determine the execution path without being explicitly notified 
-of the destination address of the return.  The 'implicit return' option can result in very 
+of the destination address of the return.  The implicit return mode can result in very
 significant improvements in trace encoder efficiency.  
 
 Returns can only be treated as inferable if the associated call has already been reported in 
-a \textit{te\_inst} packet.  The encoder must ensure that this is the case.  This can be accomplished 
+an earlier trace packet. The encoder must ensure that this is the case.  This can be accomplished
 by utilizing a counter to keep track of the number of nested calls being traced.  The counter 
 increments on calls (but not tail calls), and decrements on returns (see Section~\ref{Jump Classes} 
-for definitions).  The counter will not over or underflow, and is reset to 0 whenever a format 3 
-\textit{te\_inst} packet is sent.  Returns will be treated as inferable and will not generate a trace 
-packet if the count is non-zero (i.e. the associated call was already reported in a \textit{te\_inst} packet).
+for definitions).  The counter will not over or underflow, and is reset to 0 whenever a synchronization
+packet is sent.  Returns will be treated as inferable and will not generate a trace
+packet if the count is non-zero.
 
-Such a scheme is low cost, and will work as long as programs are "well behaved".  It does not check that the 
+Such a scheme is low cost, and will work as long as programs are "well behaved". The encoder does not check that the
 return address is actually that of the instruction following the associated call.  As such, any program that
 modifies return addresses cannot be traced using this mode with this minimal implementation.
 
 Alternatively, the encoder can maintain a stack of expected return addresses, and only treat the 
 return as inferable if the actual return address matches the prediction.  This is fully robust for all
 programs, but is more expensive to implement.  In this case, if a return address does not match the prediction, 
-it must be reported explicitly via a \textit{te\_inst} packet, along with the number of return addresses 
+it must be reported explicitly via a trace packet, along with the number of return addresses
 currently on the stack.  This ensures that the decoder can determine which return is being reported. 
 
-\subsubsection{Branch prediction} \label{sec:branch-prediction}
+\subsection{Branch prediction} \label{sec:branch-prediction}
 
 Related parameters: \textit{bpred\_size\_p}.
 
