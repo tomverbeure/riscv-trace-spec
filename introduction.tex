@@ -12,7 +12,7 @@ running system as this is intrusive.  Providing visibility of program
 execution is important.  This needs to be done without swamping the
 system with vast amounts of data.
 
-One method of achieving this is via a Processor Branch Trace.
+One method of achieving this is via an Instruction Branch Trace.
 
 This works by tracking execution from a known start address and sending
 messages about the address deltas taken by the program. These deltas are
@@ -24,7 +24,7 @@ Conceptually, the system has one or more of the following fundamental components
 \begin{itemize}
   \item
     A CPU with an instruction trace interface that outputs all relevant
-    information to successfully create a processor branch trace and more.
+    information to successfully create an instruction branch trace and more.
     This is a high bandwidth interface: in most implementations, it will supply
     a large amount of data (instruction address, instruction type, context information, ...)
     for each CPU execution clock cycle.
